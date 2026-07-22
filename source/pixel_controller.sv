@@ -1,0 +1,151 @@
+module pixel_controller(
+    input logic clk, n_rst, 
+    input logic r_ready, g_ready, b_ready,
+    input logic config_ready, 
+    input logic [7:0] config_byte,
+    output logic [2:0] mode_locked,
+    output logic [4:0] threshold_locked,
+    output logic output_ready,
+    output logic output_ready_for_rx // one cycle delay to feed back to rgb uart rx
+);
+    typedef enum logic [1:0] {
+        INPUT_MODE,
+        INPUT_THRESHOLD,
+        STREAM
+    } state_t;
+
+    state_t state, next_state;
+
+    // INTERNAL SIGNAL DECLARATIONS
+
+    // mode and threshold
+    logic [2:0] mode_next;
+    logic [4:0] threshold_next;
+
+    // counter to determine when we finish streaming pixels
+    logic [12:0] pixelCount, pixelCount_next;
+
+    // rollover flag to determine when we finish streaming pixels
+    logic rollover, rollover_next;
+
+
+    // register output_ready by one cycle before it goes back to uart RX
+    // breaks instant feedback loop bug causing oscillations
+    always_ff @(posedge clk, negedge n_rst) begin
+        if(!n_rst) begin
+            output_ready_for_rx <= '0;
+        end
+        else begin
+            output_ready_for_rx <= output_ready; 
+        end
+    end 
+
+    // make counter increment only once each pixel, even if output_ready stays high
+    // for multiple cycles
+    logic output_ready_prev, output_ready_pulse;
+    always_ff @(posedge clk, negedge n_rst) begin
+        if(!n_rst) begin
+            output_ready_prev <= '0;
+        end
+        else begin
+            output_ready_prev <= output_ready;
+        end
+    end
+    // only assert output_ready if it has not previously been asserted in the last cycle
+    assign output_ready_pulse = output_ready && !output_ready_prev;
+
+    // counter register block
+    always_ff @(posedge clk, negedge n_rst) begin
+        if(!n_rst) begin
+            pixelCount <= '0;
+            rollover <= '0;
+        end
+        else begin
+            pixelCount <= pixelCount_next;
+            rollover <= rollover_next;
+        end
+    end
+
+    // counter combinational block
+    always_comb begin
+        pixelCount_next = pixelCount;
+        rollover_next = '0;
+        
+        // condition when we process another pixel.
+        // either increment the processed counter by 1 or reset if we finished processing
+        if(output_ready_pulse)
+            // 80x60 brings us 4800 pixels, but transition at 4799 b/c we start at 0
+            if(pixelCount == 13'd4799) begin
+                pixelCount_next = '0;
+                rollover_next = '1;
+            end
+            else begin
+                pixelCount_next = pixelCount + 13'b1;
+            end
+            
+    end
+
+    // mode and threshold register block
+    always_ff @(posedge clk, negedge n_rst) begin
+        if(!n_rst) begin
+            mode_locked <= '0;
+            threshold_locked <= '0;
+        end
+        else begin
+            mode_locked <= mode_next;
+            threshold_locked <= threshold_next;
+        end
+    end
+
+    // mode and threshold combinational block
+    always_comb begin
+
+        // lock the registers if we are not in an input state
+        mode_next = mode_locked;
+        threshold_next = threshold_locked;
+
+        // accept mode or threshold inputs only if we are in the input mode or threshold states
+        if(state == INPUT_MODE) begin
+            if(config_ready) begin
+                mode_next = config_byte[2:0];
+            end
+        end
+        else if(state == INPUT_THRESHOLD) begin
+            if(config_ready) begin
+                threshold_next = config_byte[4:0];
+            end
+        end
+    end
+
+    // state register block
+    always_ff @(posedge clk, negedge n_rst) begin
+        if(!n_rst) begin
+            state <= INPUT_MODE;
+        end
+        else begin
+            state <= next_state;
+        end
+    end
+
+    
+
+    // next state logic block
+    always_comb begin
+        case(state) 
+            INPUT_MODE: next_state = state_t'(config_ready ? INPUT_THRESHOLD : INPUT_MODE);
+            INPUT_THRESHOLD: next_state = state_t'(config_ready ? STREAM : INPUT_THRESHOLD);
+            STREAM: next_state = state_t'(rollover ? INPUT_MODE : STREAM);
+            default: next_state = INPUT_MODE;
+        endcase
+    end
+
+    // output logic block
+    always_comb begin
+        output_ready = '0;
+        case(state) 
+            // in stream state, assert output_ready if the rgb uart bytes have all been shifted in
+            STREAM: output_ready = r_ready & g_ready & b_ready;
+            default: output_ready = '0;
+        endcase
+    end
+endmodule

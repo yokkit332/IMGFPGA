@@ -3,6 +3,6 @@
     // subject to disciplinary action.
     //
     // Do not change this file.
-    "chat.disableAIFeatures": true
+    "chat.disableAIFeatures": false
     // Do not change this file.
 }

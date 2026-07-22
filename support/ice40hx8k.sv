@@ -61,8 +61,8 @@ module ice40hx8k (hwclk,pb,ss7,ss6,ss5,ss4,ss3,ss2,ss1,ss0,left,right,red,green,
         .FDA_FEEDBACK(4'b0000),
         .FDA_RELATIVE(4'b0000),
         .DIVR(4'b0101),        // 5
-        .DIVF(7'b0000100),     // 4
-        .DIVQ(3'b011),         // 3
+        .DIVF(4'd11),     // 4
+        .DIVQ(2'd2),         // 3
         .FILTER_RANGE(3'b001), // 1
     ) pll (
         .REFERENCECLK (hwclk),
