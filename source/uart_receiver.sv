@@ -11,19 +11,17 @@ module uart_receiver #(
     output logic framing_error,
     output logic overrun_error
 );
+
     logic synchronized_rx;
     logic start_detected;
-
     logic detector_enable;
     logic start_timer;
     logic timer_enable;
     logic shift_strobe;
     logic packet_done;
-
     logic clear_shift_register;
     logic [7:0] packet_data;
     logic stop_bit;
-
     logic stop_check_enable;
     logic stop_check_clear;
     logic checked_framing_error;
@@ -101,4 +99,5 @@ module uart_receiver #(
         .framing_error(framing_error),
         .overrun_error(overrun_error)
     );
+
 endmodule
