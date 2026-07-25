@@ -1,96 +1,156 @@
 module top #(
-    parameter int CLOCK_FREQ = 66_000_000,
-    parameter int BAUD_RATE = 115_200
-)(
+    parameter integer CLOCK_FREQ = 12_000_000,
+    parameter integer BAUD_RATE = 115_200,
+    parameter integer NUM_PIXELS = 4800
+) (
     input logic clk,
     input logic n_rst,
+    input logic serial_rx,
+    output logic serial_tx;
 
-    input logic rx_r,
-    input logic rx_g,
-    input logic rx_b,
-    input logic rx_config,
 
-    output logic tx_r,
-    output logic tx_g,
-    output logic tx_b
-    
 );
-    /*
-    input logic [20:0] pb,
-    output logic [7:0] left,
-    output logic [7:0] right,
-    output logic [7:0] ss7,
-    output logic [7:0] ss6,
-    output logic [7:0] ss5,
-    output logic [7:0] ss4,
-    output logic [7:0] ss3,
-    output logic [7:0] ss2,
-    output logic [7:0] ss1,
-    output logic [7:0] ss0,
-    output logic red,
-    output logic green,
-    output logic blue,
-    output logic [7:0] txdata,
-    input logic [7:0] rxdata,
-    output logic txclk,
-    output logic rxclk,
-    input logic txready,
-    input logic rxready
-    */
-    // internal signals
-    logic r_ready, g_ready, b_ready, config_ready, output_ready, output_ready_for_rx;
-    logic [7:0] config_byte, r_in, b_in, g_in, r_out, g_out, b_out;
+    logic [7:0] received_byte;
+    logic received_byte_ready;
+    logic received_byte_read;
+    logic uart_framing_error;
+    logic uart_overrun_error;
+    logic [2:0] decoded_mode;
+    logic decoded_mode_valid;
+    logic [4:0] decoded_threshold;
+    logic decoded_threshold_valid;
+    logic [7:0] decoded_red;
+    logic [7:0] decoded_green;
+    logic [7:0] decoded_blue;
+    logic decoded_pixel_valid;
+    logic decoded_frame_start;
+    logic decoded_frame_done;
+    logic decoder_stream_error;
+    logic [7:0] red_locked;
+    logic [7:0] green_locked;
+    logic [7:0] blue_locked;
+    logic [2:0] mode_locked;
+    logic [4:0] threshold_locked;
+    logic transmit_pixel;
+    logic pixel_overrun;
+    logic [7:0] processed_red;
+    logic [7:0] processed_green;
+    logic [7:0] processed_blue;
+    logic transmitter_ready;
+    logic tx_pixel_ready;
+    logic tx_busy;
+    logic tx_pixel_done;
+    logic tx_overflow;
     logic [2:0] mode_locked;
     logic [4:0] threshold_locked;
 
-    // uart rx rgb instantiations
-    uart_rx_top #(
-        .CLOCK_FREQ(CLOCK_FREQ), .BAUD_RATE(BAUD_RATE)
-    )rgb_rx (
-        .clk(clk), .n_rst(n_rst),
-        .serial_rx_r(rx_r), .serial_rx_g(rx_g), .serial_rx_b(rx_b),
-        .baud_tick_shared(1'b0), .output_ready(output_ready_for_rx),
-        .r_px(r_in), .r_ready(r_ready), 
-        .g_px(g_in), .g_ready(g_ready), 
-        .b_px(b_in), .b_ready(b_ready)
+    uart_receiver #(
+        .CLOCK_FREQ(CLOCK_FREQ),
+        .BAUD_RATE(BAUD_RATE)
+    ) input_uart (
+        .clk(clk),
+        .n_rst(n_rst),
+        .serial_rx(serial_rx),
+        .data_read(received_byte_read),
+        .rx_data(received_byte),
+        .data_ready(received_byte_ready),
+        .framing_error(uart_framing_error),
+        .overrun_error(uart_overrun_error)
     );
 
-    // uart rx config instantiation
-    uart_rx_config #(
-        .CLOCK_FREQ(CLOCK_FREQ), .BAUD_RATE(BAUD_RATE)
-    ) uart_config(
-        .clk(clk), .n_rst(n_rst),
-        .serial_rx_config(rx_config), .config_ack(config_ready),
-        .config_byte(config_byte), .config_ready(config_ready)
+    uart_stream_decoder #(
+        .NUM_PIXELS(NUM_PIXELS)
+    ) input_decoder (
+        .clk(clk),
+        .n_rst(n_rst),
+        .rx_data(received_byte),
+        .data_ready(received_byte_ready),
+        .framing_error(uart_framing_error),
+        .overrun_error(uart_overrun_error),
+        .data_read(received_byte_read),
+        .mode_value(decoded_mode),
+        .mode_valid(decoded_mode_valid),
+        .threshold_value(decoded_threshold),
+        .threshold_valid(decoded_threshold_valid),
+        .red_data(decoded_red),
+        .green_data(decoded_green),
+        .blue_data(decoded_blue),
+        .pixel_valid(decoded_pixel_valid),
+        .frame_start(decoded_frame_start),
+        .frame_done(decoded_frame_done),
+        .stream_error(decoder_stream_error)
     );
 
-    
-    // uart tx rgb instantiation
-    uart_tx_top #(
-        .CLOCK_FREQ(CLOCK_FREQ), .BAUD_RATE(BAUD_RATE)
-    ) rgb_tx(
-        .clk(clk), .n_rst(n_rst),
-        .r_out(r_out), .g_out(g_out), .b_out(b_out),
-        .output_ready(output_ready),
-        .serial_tx_r(tx_r), .serial_tx_g(tx_g), .serial_tx_b(tx_b),
-        .tx_ready(), .baud_tick()
+    pixel_controller controller (
+        .clk(clk),
+        .n_rst(n_rst),
+        .mode_value(decoded_mode),
+        .mode_valid(decoded_mode_valid),
+        .threshold_value(decoded_threshold),
+        .threshold_valid(decoded_threshold_valid),
+        .decoded_red(decoded_red),
+        .decoded_green(decoded_green),
+        .decoded_blue(decoded_blue),
+        .pixel_valid(decoded_pixel_valid),
+        .frame_start(decoded_frame_start),
+        .transmitter_ready(transmitter_ready),
+        .red_locked(red_locked),
+        .green_locked(green_locked),
+        .blue_locked(blue_locked),
+        .mode_locked(mode_locked),
+        .threshold_locked(threshold_locked),
+        .transmit_pixel(transmit_pixel),
+        .pixel_overrun(pixel_overrun)
     );
-    
 
-    // control instantiation
-    pixel_controller control (
-        .clk(clk), .n_rst(n_rst),
-        .r_ready(r_ready), .g_ready(g_ready), .b_ready(b_ready), 
-        .config_ready(config_ready), .config_byte(config_byte),
-        .mode_locked(mode_locked), .threshold_locked(threshold_locked),
-        .output_ready(output_ready), .output_ready_for_rx(output_ready_for_rx)
+    pixel_accelerator accelerator (
+        .r_in(red_locked),
+        .g_in(green_locked),
+        .b_in(blue_locked),
+        .mode_locked(mode_locked),
+        .threshold_locked(threshold_locked),
+        .r_out(processed_red),
+        .g_out(processed_green),
+        .b_out(processed_blue)
     );
 
-    // pixel accelerator instantiation
-    pixel_accelerator accelerator(
-        .r_in(r_in), .g_in(g_in), .b_in(b_in),
-        .mode_locked(mode_locked), .threshold_locked(threshold_locked),
-        .r_out(r_out), .g_out(g_out), .b_out(b_out)
+    rgb_uart_transmitter #(
+        .CLOCK_FREQ(CLOCK_FREQ),
+        .BAUD_RATE(BAUD_RATE)
+    ) output_uart (
+        .clk(clk),
+        .n_rst(n_rst),
+        .start(transmit_pixel),
+        .red_data(processed_red),
+        .green_data(processed_green),
+        .blue_data(processed_blue),
+        .serial_tx_r(tx_r),
+        .serial_tx_g(tx_g),
+        .serial_tx_b(tx_b),
+        .ready(transmitter_ready)
     );
+    pixel_uart_output #(
+    .CLOCK_FREQ(CLOCK_FREQ),
+    .BAUD_RATE(BAUD_RATE),
+    .FIFO_DEPTH(8)
+    ) output_path (
+    .clk(clk),
+    .n_rst(n_rst),
+    .mode_value(decoded_mode),
+    .mode_valid(decoded_mode_valid),
+    .threshold_value(decoded_threshold),
+    .threshold_valid(decoded_threshold_valid),
+    .red_data(decoded_red),
+    .green_data(decoded_green),
+    .blue_data(decoded_blue),
+    .pixel_valid(decoded_pixel_valid),
+    .serial_tx(serial_tx),
+    .pixel_ready(tx_pixel_ready),
+    .tx_busy(tx_busy),
+    .pixel_done(tx_pixel_done),
+    .tx_overflow(tx_overflow),
+    .mode_locked(mode_locked),
+    .threshold_locked(threshold_locked)
+);
 
 endmodule
